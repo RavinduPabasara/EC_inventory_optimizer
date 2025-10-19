@@ -204,14 +204,18 @@ class LivePackingVisualizer:
         bin_width, bin_height = self.bin_dimensions[bin_id]
         bin_area = bin_width * bin_height
         
-        ax.set_title(f'Bin {bin_id} ({bin_width}×{bin_height}) - Items: {items_count} | Area: {area_used:.1f}/{bin_area} | ${value_packed:.2f}',
+        # ax.set_title(f'Bin {bin_id} ({bin_width}×{bin_height}) - Items: {items_count} | Area: {area_used:.1f}/{bin_area} | ${value_packed:.2f}',
+        #             fontsize=12, fontweight='bold')
+        ax.set_title(f'Bin {bin_id} ({bin_width}×{bin_height}) - Items: {items_count} | Area: {area_used:.1f}/{bin_area}',
                     fontsize=12, fontweight='bold')
         
         # Calculate unpacked value
         unpacked_value = self.total_value - self.packed_value
         
-        self.fig.suptitle(f'Live Bin Packing - Placed {item_id} ({shape}) in Bin {bin_id}! | '
-                         f'Packed: ${self.packed_value:.2f} | Unpacked: ${unpacked_value:.2f}', 
+        # self.fig.suptitle(f'Live Bin Packing - Placed {item_id} ({shape}) in Bin {bin_id}! | '
+        #                  f'Packed: ${self.packed_value:.2f} | Unpacked: ${unpacked_value:.2f}', 
+        #                  fontsize=16, fontweight='bold', color='green')
+        self.fig.suptitle(f'Live Bin Packing - Placed {item_id} ({shape}) in Bin {bin_id}!', 
                          fontsize=16, fontweight='bold', color='green')
         
         # Redraw
@@ -286,7 +290,7 @@ def main():
     print("\nInitializing live visualizer...")
     visualizer = LivePackingVisualizer(num_bins=4)
     visualizer.total_value = total_value
-    print(f"Total value of items to pack: ${total_value:.2f}")
+    # print(f"Total value of items to pack: ${total_value:.2f}")
     
     # Convert plan to text for the agent
     plan_text = "Execute the following packing plan step-by-step:\n"
@@ -298,7 +302,8 @@ def main():
             shape = item_data.get('shape', 'Rectangle')
             price = item_data.get('price', 0)
             rotation = item_data.get('rotation', 0)
-            plan_text += f"\n- Place {shape} item {item_data['id']} (size {width}×{height}, ${price:.1f}, {rotation}°) at position (x={item_data['x']}, y={item_data['y']})."
+            # plan_text += f"\n- Place {shape} item {item_data['id']} (size {width}×{height}, ${price:.1f}, {rotation}°) at position (x={item_data['x']}, y={item_data['y']})."
+            plan_text += f"\n- Place {shape} item {item_data['id']} (size {width}×{height}, {rotation}°) at position (x={item_data['x']}, y={item_data['y']})."
     
     # Setup OpenAI client
     api_key = os.environ.get("OPENAI_API_KEY")
