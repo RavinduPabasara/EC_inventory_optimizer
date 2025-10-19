@@ -155,7 +155,11 @@ mvn --version
 | Real-time Animation | ⚡ Fast | 💚 Free | 📋 Pre-planned | Quick demos |
 | AI Agent Simulation | 🐌 Slower | 💰 API cost | 🤖 Realistic | Full simulation |
 
+---
+
+## 🎉 Enjoy!
 
 Watch your bins pack themselves in real-time! The visualization shows the optimal solution found by the genetic algorithm, with each item being placed exactly where the algorithm determined it should go.
 
 **Pro tip:** Try both methods to see the difference between a pre-planned animation and a live AI agent making decisions!
+

@@ -42,6 +42,16 @@ public class PackingResult {
     }
 
     /**
+     * Calculates the total area of items that could not be packed.
+     * @return The total area of unpacked items.
+     */
+    public double calculateUnpackedArea() {
+        return unpackedItems.stream()
+                .mapToDouble(item -> item.width() * item.height())
+                .sum();
+    }
+
+    /**
      * Converts the internal map representation into the final, clean list of BinSolution
      * objects ready for JSON serialization.
      * @return A list of BinSolution objects.

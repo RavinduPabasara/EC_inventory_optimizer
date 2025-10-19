@@ -17,6 +17,14 @@ class RealtimeVisualizer:
         self.fig, self.axes = plt.subplots(2, 2, figsize=(16, 12))
         self.axes = self.axes.flatten()
         
+        # Define bin dimensions: [width, height]
+        self.bin_dimensions = {
+            1: (40, 25),   # 1000 cm²
+            2: (35, 20),   # 700 cm²
+            3: (30, 25),   # 750 cm²
+            4: (30, 20)    # 600 cm²
+        }
+        
         # Color map for different item types
         self.colors = {
             'A': '#FF6B6B',  # Red for A items
@@ -33,8 +41,13 @@ class RealtimeVisualizer:
         for bin_data in packing_plan:
             bin_id = bin_data['binId']
             for item_data in bin_data['items']:
-                # Calculate dimensions based on item ID
-                width, height = self.get_item_dimensions(item_data['id'])
+                # Use actual dimensions from JSON if available, otherwise calculate
+                if 'width' in item_data and 'height' in item_data:
+                    width = item_data['width']
+                    height = item_data['height']
+                else:
+                    width, height = self.get_item_dimensions(item_data['id'])
+                
                 self.all_placements.append({
                     'bin_id': bin_id,
                     'item_id': item_data['id'],
@@ -68,21 +81,26 @@ class RealtimeVisualizer:
         """Setup the initial plot with empty bins."""
         for i, ax in enumerate(self.axes):
             if i < 4:
-                ax.set_xlim(0, 30)
-                ax.set_ylim(0, 10)
+                bin_id = i + 1
+                width, height = self.bin_dimensions[bin_id]
+                area = width * height
+                
+                ax.set_xlim(0, width)
+                ax.set_ylim(0, height)
                 ax.set_aspect('equal')
                 ax.set_xlabel('Width (cm)', fontsize=10)
                 ax.set_ylabel('Height (cm)', fontsize=10)
-                ax.set_title(f'Bin {i+1} (30×10 cm)', fontsize=12, fontweight='bold')
+                ax.set_title(f'Bin {bin_id} ({width}×{height} cm = {area} cm²)', 
+                           fontsize=12, fontweight='bold')
                 ax.grid(True, alpha=0.3)
                 
                 # Draw bin border
-                border = patches.Rectangle((0, 0), 30, 10, linewidth=2, 
+                border = patches.Rectangle((0, 0), width, height, linewidth=2, 
                                           edgecolor='black', facecolor='none')
                 ax.add_patch(border)
                 
                 # Add info text
-                ax.text(15, -1, 'Items: 0 | Area: 0/300 cm²', 
+                ax.text(width/2, -0.8, f'Items: 0 | Area: 0/{area} cm²', 
                        ha='center', fontsize=9, color='gray')
             else:
                 ax.axis('off')
@@ -133,17 +151,21 @@ class RealtimeVisualizer:
                facecolor='black', alpha=0.5))
         
         # Update bin info
+        bin_id = placement['bin_id']
         items_in_bin = sum(1 for p in self.all_placements[:step+1] 
-                          if p['bin_id'] == placement['bin_id'])
+                          if p['bin_id'] == bin_id)
         area_used = sum(p['width'] * p['height'] for p in self.all_placements[:step+1] 
-                       if p['bin_id'] == placement['bin_id'])
+                       if p['bin_id'] == bin_id)
+        
+        bin_width, bin_height = self.bin_dimensions[bin_id]
+        bin_area = bin_width * bin_height
         
         # Clear old text and add new
-        texts = [t for t in ax.texts if t.get_position()[1] == -1]
+        texts = [t for t in ax.texts if t.get_position()[1] < 0]
         for t in texts:
             t.remove()
         
-        ax.text(15, -1, f'Items: {items_in_bin} | Area: {area_used}/300 cm²', 
+        ax.text(bin_width/2, -0.8, f'Items: {items_in_bin} | Area: {area_used}/{bin_area} cm²', 
                ha='center', fontsize=9, color='gray')
         
         # Update title

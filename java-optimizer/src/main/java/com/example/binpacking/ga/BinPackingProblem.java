@@ -28,9 +28,11 @@ public class BinPackingProblem implements Problem<ISeq<Item>, EnumGene<Item>, Do
     public Function<ISeq<Item>, Double> fitness() {
         return itemOrder -> {
             PackingResult result = placer.pack(itemOrder.asList(), bins);
-            double wastage = result.calculateWastage();
-            double penalty = result.getUnpackedItems().size() * 1_000_000.0;
-            double totalCost = wastage + penalty;
+            // Cost is now the area of items that couldn't be packed
+            double unpackedArea = result.calculateUnpackedArea();
+            // Small penalty to prefer solutions with less empty space when unpacked area is equal
+            double emptySpace = result.calculateWastage();
+            double totalCost = unpackedArea + (emptySpace * 0.01);
             return 1.0 / (1.0 + totalCost);
         };
     }

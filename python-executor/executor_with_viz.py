@@ -17,6 +17,14 @@ class LivePackingVisualizer:
         self.fig, self.axes = plt.subplots(2, 2, figsize=(16, 12))
         self.axes = self.axes.flatten()
         
+        # Define bin dimensions: [width, height]
+        self.bin_dimensions = {
+            1: (40, 25),   # 1000 cm²
+            2: (35, 20),   # 700 cm²
+            3: (30, 25),   # 750 cm²
+            4: (30, 20)    # 600 cm²
+        }
+        
         # Color map for different item types
         self.colors = {
             'A': '#FF6B6B',  # Red
@@ -41,17 +49,22 @@ class LivePackingVisualizer:
         """Setup the initial plot with empty bins."""
         for i, ax in enumerate(self.axes):
             if i < 4:
+                bin_id = i + 1
+                width, height = self.bin_dimensions[bin_id]
+                area = width * height
+                
                 ax.clear()
-                ax.set_xlim(0, 30)
-                ax.set_ylim(0, 10)
+                ax.set_xlim(0, width)
+                ax.set_ylim(0, height)
                 ax.set_aspect('equal')
                 ax.set_xlabel('Width (cm)', fontsize=10)
                 ax.set_ylabel('Height (cm)', fontsize=10)
-                ax.set_title(f'Bin {i+1} (30×10 cm)', fontsize=12, fontweight='bold')
+                ax.set_title(f'Bin {bin_id} ({width}×{height} cm = {area} cm²)', 
+                           fontsize=12, fontweight='bold')
                 ax.grid(True, alpha=0.3)
                 
                 # Draw bin border
-                border = patches.Rectangle((0, 0), 30, 10, linewidth=2, 
+                border = patches.Rectangle((0, 0), width, height, linewidth=2, 
                                           edgecolor='black', facecolor='none')
                 ax.add_patch(border)
             else:
@@ -135,8 +148,10 @@ class LivePackingVisualizer:
         # Update bin info
         items_count = len(self.bin_items[bin_id])
         area_used = sum(item['width'] * item['height'] for item in self.bin_items[bin_id])
+        bin_width, bin_height = self.bin_dimensions[bin_id]
+        bin_area = bin_width * bin_height
         
-        ax.set_title(f'Bin {bin_id} - Items: {items_count} | Area: {area_used}/300 cm²',
+        ax.set_title(f'Bin {bin_id} ({bin_width}×{bin_height}) - Items: {items_count} | Area: {area_used}/{bin_area} cm²',
                     fontsize=12, fontweight='bold')
         
         self.fig.suptitle(f'Live Bin Packing - Placed {item_id} in Bin {bin_id}!', 
@@ -175,14 +190,15 @@ def move_to_bin(bin_id: int):
         visualizer.update_current_bin(bin_id)
     return f"Successfully arrived at bin #{bin_id}."
 
-def place_item(item_id: str, x: int, y: int):
+def place_item(item_id: str, x: int, y: int, width: int = None, height: int = None):
     """Places the currently held item at coordinates (x, y) within the current bin."""
     print(f"ACTION: Placing item '{item_id}' at position (x={x}, y={y}).")
     
     # Update visualization
     if visualizer and visualizer.current_bin:
-        # Try to get width/height from the plan
-        width, height = visualizer.get_item_dimensions(item_id)
+        # Use provided dimensions or fall back to defaults
+        if width is None or height is None:
+            width, height = visualizer.get_item_dimensions(item_id)
         visualizer.place_item(item_id, visualizer.current_bin, x, y, width, height)
     
     return f"Item '{item_id}' has been placed successfully."
@@ -215,7 +231,9 @@ def main():
     for bin_data in packing_plan:
         plan_text += f"\nFor Bin {bin_data['binId']}:"
         for item_data in bin_data['items']:
-            plan_text += f"\n- Place item {item_data['id']} at position (x={item_data['x']}, y={item_data['y']})."
+            width = item_data.get('width', 'unknown')
+            height = item_data.get('height', 'unknown')
+            plan_text += f"\n- Place item {item_data['id']} (size {width}×{height}) at position (x={item_data['x']}, y={item_data['y']})."
     
     # Setup OpenAI client
     api_key = os.environ.get("OPENAI_API_KEY")
@@ -269,13 +287,15 @@ def main():
             "type": "function",
             "function": {
                 "name": "place_item",
-                "description": "Places the held item at specific coordinates.",
+                "description": "Places the held item at specific coordinates with its dimensions.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "item_id": {"type": "string"},
-                        "x": {"type": "integer"},
-                        "y": {"type": "integer"}
+                        "item_id": {"type": "string", "description": "The item ID."},
+                        "x": {"type": "integer", "description": "X coordinate."},
+                        "y": {"type": "integer", "description": "Y coordinate."},
+                        "width": {"type": "integer", "description": "Item width (optional)."},
+                        "height": {"type": "integer", "description": "Item height (optional)."}
                     },
                     "required": ["item_id", "x", "y"],
                 },

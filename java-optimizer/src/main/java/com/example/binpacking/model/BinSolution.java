@@ -17,12 +17,14 @@ public record BinSolution(
 ) {
     /**
      * A nested record to control the JSON output for each item.
-     * We only want to output the ID and coordinates, not the full item object.
+     * Includes ID, coordinates, and actual dimensions (accounting for rotation).
      */
     public record ItemPlacement(
         @SerializedName("id") String id,
         @SerializedName("x") int x,
-        @SerializedName("y") int y
+        @SerializedName("y") int y,
+        @SerializedName("width") int width,
+        @SerializedName("height") int height
     ) {}
 
     /**
@@ -31,7 +33,13 @@ public record BinSolution(
      */
     public static BinSolution from(Bin bin, List<PlacedItem> placedItems) {
         List<ItemPlacement> placements = placedItems.stream()
-            .map(pi -> new ItemPlacement(pi.id(), pi.x(), pi.y()))
+            .map(pi -> new ItemPlacement(
+                pi.id(), 
+                pi.x(), 
+                pi.y(), 
+                pi.item().width(), 
+                pi.item().height()
+            ))
             .collect(Collectors.toList());
         return new BinSolution(bin.id(), placements);
     }
