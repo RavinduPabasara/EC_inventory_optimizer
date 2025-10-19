@@ -1,12 +1,10 @@
 import json
 import os
-from openai import OpenAI
-from typing import List, Dict, Any
 from dotenv import load_dotenv
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from matplotlib import animation
-import threading
+from typing import List, Dict, Any
+from agents import Agent, Runner, function_tool, RunContextWrapper
 
 # --- VISUALIZATION CLASS ---
 class LivePackingVisualizer:
@@ -160,43 +158,41 @@ class LivePackingVisualizer:
 # --- GLOBAL VISUALIZER INSTANCE ---
 visualizer = None
 
-# --- ACTION FUNCTIONS WITH VISUALIZATION ---
-def pick_up(item_id: str):
-    """Picks up the specified item from the staging area."""
+# --- TOOLS (converted to Agent SDK @function_tool style) ---
+@function_tool
+def pick_up(ctx: RunContextWrapper[Any], item_id: str) -> str:
+    """Pick up the specified item from the staging area."""
     print(f"ACTION: Robot arm is picking up item '{item_id}'.")
     if visualizer:
         visualizer.update_current_item(item_id)
     return f"Successfully holding item '{item_id}'."
 
-def move_to_bin(bin_id: int):
-    """Moves the robot arm to the specified inventory bin."""
+
+@function_tool
+def move_to_bin(ctx: RunContextWrapper[Any], bin_id: int) -> str:
+    """Move the robot arm to the specified inventory bin."""
     print(f"ACTION: Robot is moving to bin #{bin_id}.")
     if visualizer:
         visualizer.update_current_bin(bin_id)
     return f"Successfully arrived at bin #{bin_id}."
 
-def place_item(item_id: str, x: int, y: int):
-    """Places the currently held item at coordinates (x, y) within the current bin."""
+
+@function_tool
+def place_item(ctx: RunContextWrapper[Any], item_id: str, x: int, y: int) -> str:
+    """Place the currently held item at coordinates (x, y) within the current bin."""
     print(f"ACTION: Placing item '{item_id}' at position (x={x}, y={y}).")
-    
-    # Update visualization
     if visualizer and visualizer.current_bin:
-        # Try to get width/height from the plan
         width, height = visualizer.get_item_dimensions(item_id)
         visualizer.place_item(item_id, visualizer.current_bin, x, y, width, height)
-    
     return f"Item '{item_id}' has been placed successfully."
 
 # --- MAIN EXECUTION ---
 def main():
-    """Main function to run the agent executor with live visualization."""
     global visualizer
-    
     print("--- Starting AI Agent Executor with Live Visualization ---")
-    
-    # Load environment
+
     load_dotenv()
-    
+
     # Load packing plan
     try:
         with open("../optimized_plan.json", "r") as f:
@@ -205,146 +201,45 @@ def main():
         print("\nERROR: 'optimized_plan.json' not found.")
         print("Please run the Java optimizer first.")
         return
-    
+
     # Initialize visualizer
     print("\nInitializing live visualizer...")
     visualizer = LivePackingVisualizer(num_bins=4)
-    
-    # Convert plan to text for the agent
+
+    # Build textual plan for the agent
     plan_text = "Execute the following packing plan step-by-step:\n"
     for bin_data in packing_plan:
         plan_text += f"\nFor Bin {bin_data['binId']}:"
-        for item_data in bin_data['items']:
+        for item_data in bin_data["items"]:
             plan_text += f"\n- Place item {item_data['id']} at position (x={item_data['x']}, y={item_data['y']})."
-    
-    # Setup OpenAI client
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        print("\nERROR: OPENAI_API_KEY not found.")
-        return
-    
+
+    # --- DEFINE AGENT ---
+    agent = Agent(
+        name="WarehouseRobotAgent",
+        instructions=(
+            "You are a warehouse robot control agent. Execute the packing plan "
+            "using the available tools: pick_up, move_to_bin, and place_item. "
+            "Work through each bin systematically."
+        ),
+        model="gpt-4o-mini", # Using gpt-4o-mini for consistency and cost
+        tools=[pick_up, move_to_bin, place_item],
+    )
+
+    # --- RUN AGENT ---
+    print("\n--- Plan loaded. Starting agent execution... ---\n")
+
     try:
-        client = OpenAI(api_key=api_key)
+        # *** THE FIX IS HERE: Added max_turns=50 ***
+        result = Runner.run_sync(agent, plan_text, max_turns=200)
+        print("\n--- Agent execution complete ---")
+        print(result.output_text)
     except Exception as e:
-        print(f"\nERROR: Failed to initialize OpenAI client: {e}")
-        return
-    
-    # Define tools
-    available_tools = {
-        "pick_up": pick_up,
-        "move_to_bin": move_to_bin,
-        "place_item": place_item,
-    }
-    
-    tools_schema = [
-        {
-            "type": "function",
-            "function": {
-                "name": "pick_up",
-                "description": "Picks up a specified item from the staging area.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "item_id": {"type": "string", "description": "The unique ID of the item."}
-                    },
-                    "required": ["item_id"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "move_to_bin",
-                "description": "Moves the robot to a specific bin location.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "bin_id": {"type": "integer", "description": "The bin number."}
-                    },
-                    "required": ["bin_id"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "place_item",
-                "description": "Places the held item at specific coordinates.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "item_id": {"type": "string"},
-                        "x": {"type": "integer"},
-                        "y": {"type": "integer"}
-                    },
-                    "required": ["item_id", "x", "y"],
-                },
-            },
-        },
-    ]
-    
-    # Run agent loop
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a warehouse robot control agent. Execute the packing plan "
-                "using pick_up, move_to_bin, and place_item functions. "
-                "Work through each bin systematically."
-            )
-        },
-        {
-            "role": "user",
-            "content": plan_text
-        }
-    ]
-    
-    print("\n--- Plan loaded. Starting agent loop... ---\n")
-    
-    max_iterations = 200
-    for iteration in range(max_iterations):
-        try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,
-                tools=tools_schema,
-                tool_choice="auto",
-            )
-            
-            assistant_message = response.choices[0].message
-            messages.append(assistant_message)
-            
-            # Check if finished
-            if assistant_message.content and not assistant_message.tool_calls:
-                print(f"\n{assistant_message.content}")
-                break
-            
-            # Execute tool calls
-            if assistant_message.tool_calls:
-                for tool_call in assistant_message.tool_calls:
-                    function_name = tool_call.function.name
-                    function_args = json.loads(tool_call.function.arguments)
-                    
-                    if function_name in available_tools:
-                        result = available_tools[function_name](**function_args)
-                        
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "name": function_name,
-                            "content": result,
-                        })
-        
-        except Exception as e:
-            print(f"\nERROR during agent execution: {e}")
-            break
-    
-    print("\n--- Agent execution complete. ---")
-    
+        print(f"\nERROR during agent execution: {e}")
+
     # Finalize visualization
     if visualizer:
         visualizer.finalize()
 
+
 if __name__ == "__main__":
     main()
-
