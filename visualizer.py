@@ -15,18 +15,57 @@ def load_packing_plan(file_path):
     with open(file_path, 'r') as f:
         return json.load(f)
 
-def get_item_dimensions(item_id):
-    """Get dimensions for an item based on its ID."""
-    # Based on the item creation in Main.java
-    if item_id.startswith('A_'):
-        return 10, 3  # Original dimensions (will show if rotated)
-    elif item_id.startswith('B_'):
-        return 5, 5
-    elif item_id.startswith('C_'):
-        return 4, 4
-    elif item_id.startswith('D_'):
-        return 8, 2
-    return 1, 1  # fallback
+def draw_shape_patch(ax, shape, x, y, width, height, color, item_id, price, rotation=0):
+    """Draw different shapes based on the shape type with rotation support."""
+    if shape == "Circle":
+        # Draw a circle inscribed in the bounding box
+        center_x = x + width / 2
+        center_y = y + height / 2
+        radius = min(width, height) / 2
+        circle = patches.Circle((center_x, center_y), radius,
+                               linewidth=1, edgecolor='black',
+                               facecolor=color, alpha=0.7)
+        ax.add_patch(circle)
+        # Add label
+        ax.text(center_x, center_y, f"{item_id}\n${price:.1f}",
+               ha='center', va='center', fontsize=7, fontweight='bold')
+    
+    elif shape == "Triangle":
+        # Draw a right triangle with rotation support (0°, 90°, 180°, 270°)
+        # 0°: right angle at bottom-left
+        # 90°: right angle at bottom-right
+        # 180°: right angle at top-right
+        # 270°: right angle at top-left
+        if rotation == 90:
+            triangle_points = [(x, y), (x + width, y), (x + width, y + height)]
+        elif rotation == 180:
+            triangle_points = [(x + width, y), (x + width, y + height), (x, y + height)]
+        elif rotation == 270:
+            triangle_points = [(x, y + height), (x + width, y + height), (x, y)]
+        else:  # 0° (default)
+            triangle_points = [(x, y), (x + width, y), (x, y + height)]
+        
+        triangle = patches.Polygon(triangle_points,
+                                  linewidth=1, edgecolor='black',
+                                  facecolor=color, alpha=0.7)
+        ax.add_patch(triangle)
+        # Add label at centroid
+        centroid_x = x + width / 3 + (width / 3 if rotation in [90, 180] else 0)
+        centroid_y = y + height / 3 + (height / 3 if rotation in [180, 270] else 0)
+        ax.text(centroid_x, centroid_y, f"{item_id}\n${price:.1f}",
+               ha='center', va='center', fontsize=6, fontweight='bold')
+    
+    else:  # Rectangle or default
+        # Draw rectangle
+        rect = patches.Rectangle((x, y), width, height,
+                                linewidth=1, edgecolor='black',
+                                facecolor=color, alpha=0.7)
+        ax.add_patch(rect)
+        # Add label
+        center_x = x + width / 2
+        center_y = y + height / 2
+        ax.text(center_x, center_y, f"{item_id}\n${price:.1f}",
+               ha='center', va='center', fontsize=7, fontweight='bold')
 
 def create_visualization(packing_plan, output_file='bin_packing_visualization.png'):
     """Create a visual representation of the bin packing solution."""
@@ -36,12 +75,30 @@ def create_visualization(packing_plan, output_file='bin_packing_visualization.pn
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     axes = axes.flatten()
     
-    # Color map for different item types
-    colors = {
-        'A': '#FF6B6B',  # Red for A items
-        'B': '#4ECDC4',  # Teal for B items  
-        'C': '#45B7D1',  # Blue for C items
-        'D': '#96CEB4'   # Green for D items
+    # Color function for different shapes and items
+    def get_color(item_data):
+        """Get color based on item type and ID."""
+        shape = item_data.get('shape', 'Rectangle')
+        item_id = item_data['id']
+        
+        if shape == 'Circle':
+            return '#4ECDC4'  # Teal
+        elif shape == 'Triangle':
+            return '#96CEB4'  # Green
+        elif shape == 'Rectangle':
+            if 'B_Rectangle02' in item_id:
+                return '#D4A5D4'  # Pastel purple for smaller rectangle
+            else:
+                return '#FF6B6B'  # Red for Rectangle01
+        else:
+            return '#CCCCCC'  # Gray
+    
+    # Bin dimensions from Main.java
+    bin_dimensions = {
+        1: (30, 20),   # 600 cm²
+        2: (25, 20),   # 500 cm²
+        3: (25, 18),   # 450 cm²
+        4: (20, 20)    # 400 cm²
     }
     
     # Process each bin
@@ -53,8 +110,8 @@ def create_visualization(packing_plan, output_file='bin_packing_visualization.pn
         bin_id = bin_data['binId']
         items = bin_data['items']
         
-        # Bin dimensions (assuming 25x10 based on Main.java)
-        bin_width, bin_height = 25, 10
+        # Get bin dimensions
+        bin_width, bin_height = bin_dimensions.get(bin_id, (40, 25))
         
         # Draw bin outline
         bin_rect = patches.Rectangle((0, 0), bin_width, bin_height, 
@@ -62,54 +119,36 @@ def create_visualization(packing_plan, output_file='bin_packing_visualization.pn
                                    facecolor='lightgray', alpha=0.3)
         ax.add_patch(bin_rect)
         
+        # Track statistics
+        total_value = 0
+        
         # Draw each item
         for item in items:
             item_id = item['id']
+            shape = item.get('shape', 'Rectangle')  # Default to Rectangle if missing
             x, y = item['x'], item['y']
+            width, height = item['width'], item['height']
+            price = item.get('price', 0)
+            total_value += price
             
-            # Get original dimensions
-            orig_width, orig_height = get_item_dimensions(item_id)
+            # Get rotation angle
+            rotation = item.get('rotation', 0)
             
-            # Determine if item was rotated by checking if it fits in original orientation
-            # If the item's position + original dimensions would exceed bin bounds, it was rotated
-            if x + orig_width > bin_width or y + orig_height > bin_height:
-                # Item was rotated - swap dimensions
-                width, height = orig_height, orig_width
-                rotation_indicator = " (R)"
-            else:
-                # Check if there's space for original orientation
-                # If not, it was rotated
-                width, height = orig_width, orig_height
-                rotation_indicator = ""
-                
-                # Additional check: if item is at a position where original wouldn't fit
-                if (item_id.startswith('A_') and (x + 10 > bin_width or y + 3 > bin_height)) or \
-                   (item_id.startswith('D_') and (x + 8 > bin_width or y + 2 > bin_height)):
-                    width, height = orig_height, orig_width
-                    rotation_indicator = " (R)"
+            # Get color for item (distinguishes between Rectangle types)
+            color = get_color(item)
             
-            # Get color for item type
-            item_type = item_id.split('_')[0]
-            color = colors.get(item_type, '#CCCCCC')
-            
-            # Draw item rectangle
-            item_rect = patches.Rectangle((x, y), width, height,
-                                        linewidth=1, edgecolor='black',
-                                        facecolor=color, alpha=0.7)
-            ax.add_patch(item_rect)
-            
-            # Add item label
-            ax.text(x + width/2, y + height/2, f"{item_id}{rotation_indicator}", 
-                   ha='center', va='center', fontsize=8, fontweight='bold')
+            # Draw the shape with rotation
+            draw_shape_patch(ax, shape, x, y, width, height, color, item_id, price, rotation)
         
         # Set axis properties
         ax.set_xlim(0, bin_width)
         ax.set_ylim(0, bin_height)
         ax.set_aspect('equal')
-        ax.set_title(f'Bin {bin_id} ({len(items)} items)', fontsize=12, fontweight='bold')
+        ax.set_title(f'Bin {bin_id} | {len(items)} items | ${total_value:.2f}', 
+                    fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3)
-        ax.set_xlabel('Width')
-        ax.set_ylabel('Height')
+        ax.set_xlabel('Width (cm)')
+        ax.set_ylabel('Height (cm)')
     
     # Hide unused subplots
     for i in range(num_bins, 4):
@@ -117,16 +156,20 @@ def create_visualization(packing_plan, output_file='bin_packing_visualization.pn
     
     # Add legend
     legend_elements = [
-        patches.Patch(color=colors['A'], label='A items (10×3)'),
-        patches.Patch(color=colors['B'], label='B items (5×5)'),
-        patches.Patch(color=colors['C'], label='C items (4×4)'),
-        patches.Patch(color=colors['D'], label='D items (8×2)')
+        patches.Patch(color=colors['Rectangle'], label='Rectangles'),
+        patches.Patch(color=colors['Circle'], label='Circles'),
+        patches.Patch(color=colors['Triangle'], label='Triangles')
     ]
     fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98))
     
-    # Add main title
+    # Calculate statistics
     total_items = sum(len(bin_data['items']) for bin_data in packing_plan)
-    fig.suptitle(f'Bin Packing Optimization Results\n{total_items} items packed across {num_bins} bins', 
+    total_value = sum(item.get('price', 0) 
+                     for bin_data in packing_plan 
+                     for item in bin_data['items'])
+    
+    # Add main title
+    fig.suptitle(f'Bin Packing Optimization Results\n{total_items} items packed | Total Value: ${total_value:.2f}', 
                  fontsize=16, fontweight='bold')
     
     plt.tight_layout()
@@ -135,39 +178,53 @@ def create_visualization(packing_plan, output_file='bin_packing_visualization.pn
     
     print(f"Visualization saved as: {output_file}")
     print(f"Total items packed: {total_items}")
+    print(f"Total value: ${total_value:.2f}")
 
-def analyze_rotation_usage(packing_plan):
-    """Analyze which items were rotated and provide statistics."""
-    print("\n=== Rotation Analysis ===")
+def calculate_actual_area(shape, width, height):
+    """Calculate actual area based on shape type."""
+    if shape == "Triangle":
+        return (width * height) / 2.0  # Right triangle
+    elif shape == "Circle":
+        import math
+        radius = min(width, height) / 2.0
+        return math.pi * radius * radius  # Inscribed circle
+    else:
+        return width * height  # Rectangle
+
+def analyze_packing(packing_plan):
+    """Analyze packing statistics by shape."""
+    print("\n=== Packing Analysis by Shape ===")
     
-    rotation_stats = {
-        'A': {'total': 0, 'rotated': 0},
-        'B': {'total': 0, 'rotated': 0}, 
-        'C': {'total': 0, 'rotated': 0},
-        'D': {'total': 0, 'rotated': 0}
-    }
+    shape_stats = {}
     
     for bin_data in packing_plan:
         for item in bin_data['items']:
-            item_id = item['id']
-            item_type = item_id.split('_')[0]
-            x, y = item['x'], item['y']
+            shape = item.get('shape', 'Unknown')
+            price = item.get('price', 0)
+            width = item['width']
+            height = item['height']
             
-            # Get original dimensions
-            orig_width, orig_height = get_item_dimensions(item_id)
+            if shape not in shape_stats:
+                shape_stats[shape] = {
+                    'count': 0,
+                    'total_value': 0,
+                    'total_area': 0,
+                    'bounding_area': 0
+                }
             
-            # Check if rotated
-            if x + orig_width > 25 or y + orig_height > 10:
-                rotation_stats[item_type]['rotated'] += 1
-            rotation_stats[item_type]['total'] += 1
+            shape_stats[shape]['count'] += 1
+            shape_stats[shape]['total_value'] += price
+            shape_stats[shape]['total_area'] += calculate_actual_area(shape, width, height)
+            shape_stats[shape]['bounding_area'] += width * height
     
-    for item_type, stats in rotation_stats.items():
-        if stats['total'] > 0:
-            rotation_rate = (stats['rotated'] / stats['total']) * 100
-            print(f"{item_type} items: {stats['rotated']}/{stats['total']} rotated ({rotation_rate:.1f}%)")
+    for shape, stats in sorted(shape_stats.items()):
+        efficiency = (stats['total_area'] / stats['bounding_area'] * 100) if stats['bounding_area'] > 0 else 100
+        print(f"{shape}s: {stats['count']} items | "
+              f"${stats['total_value']:.2f} value | "
+              f"{stats['total_area']:.1f} cm² actual ({efficiency:.0f}% of bounding box)")
 
 if __name__ == "__main__":
     # Load and visualize the packing plan
     packing_plan = load_packing_plan('optimized_plan.json')
     create_visualization(packing_plan)
-    analyze_rotation_usage(packing_plan)
+    analyze_packing(packing_plan)

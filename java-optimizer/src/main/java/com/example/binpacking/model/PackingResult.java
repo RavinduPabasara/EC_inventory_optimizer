@@ -26,7 +26,7 @@ public class PackingResult {
 
     /**
      * Calculates the total wasted space across all bins for this packing solution.
-     * Wastage = (Total Area of Bins) - (Total Area of Packed Items)
+     * Wastage = (Total Area of Bins) - (Total Actual Area of Packed Items)
      * @return The total wastage value.
      */
     public double calculateWastage() {
@@ -35,7 +35,7 @@ public class PackingResult {
 
         for (List<PlacedItem> itemsInBin : solutionMap.values()) {
             totalItemArea += itemsInBin.stream()
-                .mapToDouble(placedItem -> placedItem.item().width() * placedItem.item().height())
+                .mapToDouble(placedItem -> placedItem.item().actualArea())  // Use actual shape area!
                 .sum();
         }
         return totalBinArea - totalItemArea;
@@ -43,11 +43,32 @@ public class PackingResult {
 
     /**
      * Calculates the total area of items that could not be packed.
-     * @return The total area of unpacked items.
+     * @return The total actual area of unpacked items.
      */
     public double calculateUnpackedArea() {
         return unpackedItems.stream()
-                .mapToDouble(item -> item.width() * item.height())
+                .mapToDouble(Item::actualArea)  // Use actual shape area!
+                .sum();
+    }
+
+    /**
+     * Calculates the total value (price) of items that could not be packed.
+     * @return The total value of unpacked items.
+     */
+    public double calculateUnpackedValue() {
+        return unpackedItems.stream()
+                .mapToDouble(Item::price)
+                .sum();
+    }
+
+    /**
+     * Calculates the total value (price) of items that were successfully packed.
+     * @return The total value of packed items.
+     */
+    public double calculatePackedValue() {
+        return solutionMap.values().stream()
+                .flatMap(List::stream)
+                .mapToDouble(placedItem -> placedItem.item().price())
                 .sum();
     }
 

@@ -1,5 +1,6 @@
 import json
 import os
+import math
 from openai import OpenAI
 from typing import List, Dict, Any
 from dotenv import load_dotenv
@@ -7,6 +8,17 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib import animation
 import threading
+
+# --- UTILITY FUNCTIONS ---
+def calculate_actual_area(shape, width, height):
+    """Calculate actual area based on shape type."""
+    if shape == "Triangle":
+        return (width * height) / 2.0  # Right triangle
+    elif shape == "Circle":
+        radius = min(width, height) / 2.0
+        return math.pi * radius * radius  # Inscribed circle
+    else:
+        return width * height  # Rectangle
 
 # --- VISUALIZATION CLASS ---
 class LivePackingVisualizer:
@@ -19,18 +31,10 @@ class LivePackingVisualizer:
         
         # Define bin dimensions: [width, height]
         self.bin_dimensions = {
-            1: (40, 25),   # 1000 cm²
-            2: (35, 20),   # 700 cm²
-            3: (30, 25),   # 750 cm²
-            4: (30, 20)    # 600 cm²
-        }
-        
-        # Color map for different item types
-        self.colors = {
-            'A': '#FF6B6B',  # Red
-            'B': '#4ECDC4',  # Teal  
-            'C': '#45B7D1',  # Blue
-            'D': '#96CEB4'   # Green
+            1: (30, 20),   # 600 cm²
+            2: (25, 20),   # 500 cm²
+            3: (25, 18),   # 450 cm²
+            4: (20, 20)    # 400 cm²
         }
         
         # Track bin states
@@ -38,12 +42,30 @@ class LivePackingVisualizer:
         self.current_bin = None
         self.current_item = None
         
+        # Track total and packed value
+        self.total_value = 0
+        self.packed_value = 0
+        
         # Setup initial plot
         self.setup_plot()
         
         # Enable interactive mode
         plt.ion()
         plt.show()
+    
+    def get_color(self, item_id, shape):
+        """Get color based on item type and ID."""
+        if shape == 'Circle':
+            return '#4ECDC4'  # Teal
+        elif shape == 'Triangle':
+            return '#96CEB4'  # Green
+        elif shape == 'Rectangle':
+            if 'B_Rectangle02' in item_id:
+                return '#D4A5D4'  # Pastel purple for smaller rectangle
+            else:
+                return '#FF6B6B'  # Red for Rectangle01
+        else:
+            return '#CCCCCC'  # Gray
     
     def setup_plot(self):
         """Setup the initial plot with empty bins."""
@@ -74,21 +96,63 @@ class LivePackingVisualizer:
                          fontsize=16, fontweight='bold')
         plt.tight_layout()
     
-    def get_item_type(self, item_id):
-        """Extract the item type from item ID."""
-        return item_id.split('_')[0] if '_' in item_id else 'A'
-    
-    def get_item_dimensions(self, item_id):
-        """Get default dimensions for an item based on its ID."""
-        if item_id.startswith('A_'):
-            return 10, 3
-        elif item_id.startswith('B_'):
-            return 5, 5
-        elif item_id.startswith('C_'):
-            return 4, 4
-        elif item_id.startswith('D_'):
-            return 8, 2
-        return 1, 1
+    def draw_shape_patch(self, ax, shape, x, y, width, height, color, item_id, rotation=0):
+        """Draw different shapes based on the shape type with rotation support."""
+        if shape == "Circle":
+            # Draw a circle inscribed in the bounding box
+            center_x = x + width / 2
+            center_y = y + height / 2
+            radius = min(width, height) / 2
+            circle = patches.Circle((center_x, center_y), radius,
+                                   linewidth=2, edgecolor='yellow',
+                                   facecolor=color, alpha=0.8)
+            ax.add_patch(circle)
+            # Add label
+            ax.text(center_x, center_y, item_id,
+                   ha='center', va='center', fontsize=8, fontweight='bold',
+                   color='white', bbox=dict(boxstyle='round,pad=0.3', 
+                   facecolor='black', alpha=0.5))
+        
+        elif shape == "Triangle":
+            # Draw a right triangle with rotation support (0°, 90°, 180°, 270°)
+            # 0°: right angle at bottom-left
+            # 90°: right angle at bottom-right
+            # 180°: right angle at top-right
+            # 270°: right angle at top-left
+            if rotation == 90:
+                triangle_points = [(x, y), (x + width, y), (x + width, y + height)]
+            elif rotation == 180:
+                triangle_points = [(x + width, y), (x + width, y + height), (x, y + height)]
+            elif rotation == 270:
+                triangle_points = [(x, y + height), (x + width, y + height), (x, y)]
+            else:  # 0° (default)
+                triangle_points = [(x, y), (x + width, y), (x, y + height)]
+            
+            triangle = patches.Polygon(triangle_points,
+                                      linewidth=2, edgecolor='yellow',
+                                      facecolor=color, alpha=0.8)
+            ax.add_patch(triangle)
+            # Add label at centroid
+            centroid_x = x + width / 3 + (width / 3 if rotation in [90, 180] else 0)
+            centroid_y = y + height / 3 + (height / 3 if rotation in [180, 270] else 0)
+            ax.text(centroid_x, centroid_y, item_id,
+                   ha='center', va='center', fontsize=7, fontweight='bold',
+                   color='white', bbox=dict(boxstyle='round,pad=0.3', 
+                   facecolor='black', alpha=0.5))
+        
+        else:  # Rectangle or default
+            # Draw rectangle
+            rect = patches.Rectangle((x, y), width, height,
+                                    linewidth=2, edgecolor='yellow',
+                                    facecolor=color, alpha=0.8)
+            ax.add_patch(rect)
+            # Add label
+            center_x = x + width / 2
+            center_y = y + height / 2
+            ax.text(center_x, center_y, item_id,
+                   ha='center', va='center', fontsize=8, fontweight='bold',
+                   color='white', bbox=dict(boxstyle='round,pad=0.3', 
+                   facecolor='black', alpha=0.5))
     
     def update_current_item(self, item_id):
         """Update which item is currently being handled."""
@@ -105,56 +169,49 @@ class LivePackingVisualizer:
                              fontsize=16, fontweight='bold', color='orange')
         plt.pause(0.1)
     
-    def place_item(self, item_id, bin_id, x, y, width=None, height=None):
+    def place_item(self, item_id, bin_id, x, y, width, height, shape='Rectangle', price=0, rotation=0):
         """Place an item in the visualization."""
         if bin_id < 1 or bin_id > 4:
             return
         
-        # Get dimensions if not provided
-        if width is None or height is None:
-            width, height = self.get_item_dimensions(item_id)
-        
         bin_idx = bin_id - 1
         ax = self.axes[bin_idx]
         
-        item_type = self.get_item_type(item_id)
-        color = self.colors.get(item_type, '#CCCCCC')
+        # Get color based on item type
+        color = self.get_color(item_id, shape)
         
-        # Draw the item
-        rect = patches.Rectangle(
-            (x, y), width, height,
-            linewidth=2,
-            edgecolor='yellow',
-            facecolor=color,
-            alpha=0.8
-        )
-        ax.add_patch(rect)
-        
-        # Add label
-        center_x = x + width / 2
-        center_y = y + height / 2
-        ax.text(center_x, center_y, item_id,
-               ha='center', va='center', fontsize=8, fontweight='bold',
-               color='white', bbox=dict(boxstyle='round,pad=0.3', 
-               facecolor='black', alpha=0.5))
+        # Draw the shape with rotation
+        self.draw_shape_patch(ax, shape, x, y, width, height, color, item_id, rotation)
         
         # Store item info
         self.bin_items[bin_id].append({
             'id': item_id,
+            'shape': shape,
             'x': x, 'y': y,
-            'width': width, 'height': height
+            'width': width, 'height': height,
+            'price': price,
+            'rotation': rotation
         })
+        
+        # Update packed value
+        self.packed_value += price
         
         # Update bin info
         items_count = len(self.bin_items[bin_id])
-        area_used = sum(item['width'] * item['height'] for item in self.bin_items[bin_id])
+        area_used = sum(calculate_actual_area(item['shape'], item['width'], item['height']) 
+                       for item in self.bin_items[bin_id])
+        value_packed = sum(item['price'] for item in self.bin_items[bin_id])
         bin_width, bin_height = self.bin_dimensions[bin_id]
         bin_area = bin_width * bin_height
         
-        ax.set_title(f'Bin {bin_id} ({bin_width}×{bin_height}) - Items: {items_count} | Area: {area_used}/{bin_area} cm²',
+        ax.set_title(f'Bin {bin_id} ({bin_width}×{bin_height}) - Items: {items_count} | Area: {area_used:.1f}/{bin_area} | ${value_packed:.2f}',
                     fontsize=12, fontweight='bold')
         
-        self.fig.suptitle(f'Live Bin Packing - Placed {item_id} in Bin {bin_id}!', 
+        # Calculate unpacked value
+        unpacked_value = self.total_value - self.packed_value
+        
+        self.fig.suptitle(f'Live Bin Packing - Placed {item_id} ({shape}) in Bin {bin_id}! | '
+                         f'Packed: ${self.packed_value:.2f} | Unpacked: ${unpacked_value:.2f}', 
                          fontsize=16, fontweight='bold', color='green')
         
         # Redraw
@@ -190,16 +247,13 @@ def move_to_bin(bin_id: int):
         visualizer.update_current_bin(bin_id)
     return f"Successfully arrived at bin #{bin_id}."
 
-def place_item(item_id: str, x: int, y: int, width: int = None, height: int = None):
+def place_item(item_id: str, x: int, y: int, width: int, height: int, shape: str = 'Rectangle', price: float = 0, rotation: int = 0):
     """Places the currently held item at coordinates (x, y) within the current bin."""
-    print(f"ACTION: Placing item '{item_id}' at position (x={x}, y={y}).")
+    print(f"ACTION: Placing item '{item_id}' ({shape}, {rotation}°) at position (x={x}, y={y}).")
     
     # Update visualization
     if visualizer and visualizer.current_bin:
-        # Use provided dimensions or fall back to defaults
-        if width is None or height is None:
-            width, height = visualizer.get_item_dimensions(item_id)
-        visualizer.place_item(item_id, visualizer.current_bin, x, y, width, height)
+        visualizer.place_item(item_id, visualizer.current_bin, x, y, width, height, shape, price, rotation)
     
     return f"Item '{item_id}' has been placed successfully."
 
@@ -222,18 +276,29 @@ def main():
         print("Please run the Java optimizer first.")
         return
     
+    # Calculate total value from all items in the plan
+    total_value = 0
+    for bin_data in packing_plan:
+        for item_data in bin_data['items']:
+            total_value += item_data.get('price', 0)
+    
     # Initialize visualizer
     print("\nInitializing live visualizer...")
     visualizer = LivePackingVisualizer(num_bins=4)
+    visualizer.total_value = total_value
+    print(f"Total value of items to pack: ${total_value:.2f}")
     
     # Convert plan to text for the agent
     plan_text = "Execute the following packing plan step-by-step:\n"
     for bin_data in packing_plan:
         plan_text += f"\nFor Bin {bin_data['binId']}:"
         for item_data in bin_data['items']:
-            width = item_data.get('width', 'unknown')
-            height = item_data.get('height', 'unknown')
-            plan_text += f"\n- Place item {item_data['id']} (size {width}×{height}) at position (x={item_data['x']}, y={item_data['y']})."
+            width = item_data.get('width', 0)
+            height = item_data.get('height', 0)
+            shape = item_data.get('shape', 'Rectangle')
+            price = item_data.get('price', 0)
+            rotation = item_data.get('rotation', 0)
+            plan_text += f"\n- Place {shape} item {item_data['id']} (size {width}×{height}, ${price:.1f}, {rotation}°) at position (x={item_data['x']}, y={item_data['y']})."
     
     # Setup OpenAI client
     api_key = os.environ.get("OPENAI_API_KEY")
@@ -287,17 +352,20 @@ def main():
             "type": "function",
             "function": {
                 "name": "place_item",
-                "description": "Places the held item at specific coordinates with its dimensions.",
+                "description": "Places the held item at specific coordinates with its dimensions, shape, and price.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "item_id": {"type": "string", "description": "The item ID."},
                         "x": {"type": "integer", "description": "X coordinate."},
                         "y": {"type": "integer", "description": "Y coordinate."},
-                        "width": {"type": "integer", "description": "Item width (optional)."},
-                        "height": {"type": "integer", "description": "Item height (optional)."}
+                        "width": {"type": "integer", "description": "Item width."},
+                        "height": {"type": "integer", "description": "Item height."},
+                        "shape": {"type": "string", "description": "Shape type (Rectangle, Circle, Triangle)."},
+                        "price": {"type": "number", "description": "Item price."},
+                        "rotation": {"type": "integer", "description": "Rotation angle in degrees (0, 90, 180, 270)."}
                     },
-                    "required": ["item_id", "x", "y"],
+                    "required": ["item_id", "x", "y", "width", "height"],
                 },
             },
         },

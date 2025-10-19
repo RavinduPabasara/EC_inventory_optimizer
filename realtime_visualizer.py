@@ -5,11 +5,22 @@ Shows the bin packing process as it happens, step by step.
 """
 
 import json
+import math
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.animation import FuncAnimation
 import numpy as np
 import time
+
+def calculate_actual_area(shape, width, height):
+    """Calculate actual area based on shape type."""
+    if shape == "Triangle":
+        return (width * height) / 2.0  # Right triangle
+    elif shape == "Circle":
+        radius = min(width, height) / 2.0
+        return math.pi * radius * radius  # Inscribed circle
+    else:
+        return width * height  # Rectangle
 
 class RealtimeVisualizer:
     def __init__(self, packing_plan):
@@ -19,19 +30,28 @@ class RealtimeVisualizer:
         
         # Define bin dimensions: [width, height]
         self.bin_dimensions = {
-            1: (40, 25),   # 1000 cm²
-            2: (35, 20),   # 700 cm²
-            3: (30, 25),   # 750 cm²
-            4: (30, 20)    # 600 cm²
+            1: (30, 20),   # 600 cm²
+            2: (25, 20),   # 500 cm²
+            3: (25, 18),   # 450 cm²
+            4: (20, 20)    # 400 cm²
         }
         
-        # Color map for different item types
-        self.colors = {
-            'A': '#FF6B6B',  # Red for A items
-            'B': '#4ECDC4',  # Teal for B items  
-            'C': '#45B7D1',  # Blue for C items
-            'D': '#96CEB4'   # Green for D items
-        }
+        # Color function for different shapes
+        def get_color(item_id, shape):
+            """Get color based on item type and ID."""
+            if shape == 'Circle':
+                return '#4ECDC4'  # Teal
+            elif shape == 'Triangle':
+                return '#96CEB4'  # Green
+            elif shape == 'Rectangle':
+                if 'B_Rectangle02' in item_id:
+                    return '#D4A5D4'  # Pastel purple for smaller rectangle
+                else:
+                    return '#FF6B6B'  # Red for Rectangle01
+            else:
+                return '#CCCCCC'  # Gray
+        
+        self.get_color = get_color
         
         # Track which items have been placed
         self.current_step = 0
@@ -41,41 +61,72 @@ class RealtimeVisualizer:
         for bin_data in packing_plan:
             bin_id = bin_data['binId']
             for item_data in bin_data['items']:
-                # Use actual dimensions from JSON if available, otherwise calculate
-                if 'width' in item_data and 'height' in item_data:
-                    width = item_data['width']
-                    height = item_data['height']
-                else:
-                    width, height = self.get_item_dimensions(item_data['id'])
-                
                 self.all_placements.append({
                     'bin_id': bin_id,
                     'item_id': item_data['id'],
                     'x': item_data['x'],
                     'y': item_data['y'],
-                    'width': width,
-                    'height': height,
-                    'rotated': item_data.get('rotated', False)
+                    'width': item_data['width'],
+                    'height': item_data['height'],
+                    'shape': item_data.get('shape', 'Rectangle'),
+                    'price': item_data.get('price', 0),
+                    'rotation': item_data.get('rotation', 0)
                 })
         
         # Initialize the plot
         self.setup_plot()
     
-    def get_item_type(self, item_id):
-        """Extract the item type from item ID (e.g., 'A_0' -> 'A')"""
-        return item_id.split('_')[0]
-    
-    def get_item_dimensions(self, item_id):
-        """Get dimensions for an item based on its ID."""
-        if item_id.startswith('A_'):
-            return 10, 3
-        elif item_id.startswith('B_'):
-            return 5, 5
-        elif item_id.startswith('C_'):
-            return 4, 4
-        elif item_id.startswith('D_'):
-            return 8, 2
-        return 1, 1  # fallback
+    def draw_shape_patch(self, ax, shape, x, y, width, height, color, item_id, price, rotation=0):
+        """Draw different shapes based on the shape type with rotation support."""
+        if shape == "Circle":
+            # Draw a circle inscribed in the bounding box
+            center_x = x + width / 2
+            center_y = y + height / 2
+            radius = min(width, height) / 2
+            circle = patches.Circle((center_x, center_y), radius,
+                                   linewidth=1, edgecolor='black',
+                                   facecolor=color, alpha=0.7)
+            ax.add_patch(circle)
+            # Add label
+            ax.text(center_x, center_y, f"{item_id}\n${price:.1f}",
+                   ha='center', va='center', fontsize=7, fontweight='bold')
+        
+        elif shape == "Triangle":
+            # Draw a right triangle with rotation support (0°, 90°, 180°, 270°)
+            # 0°: right angle at bottom-left
+            # 90°: right angle at bottom-right
+            # 180°: right angle at top-right
+            # 270°: right angle at top-left
+            if rotation == 90:
+                triangle_points = [(x, y), (x + width, y), (x + width, y + height)]
+            elif rotation == 180:
+                triangle_points = [(x + width, y), (x + width, y + height), (x, y + height)]
+            elif rotation == 270:
+                triangle_points = [(x, y + height), (x + width, y + height), (x, y)]
+            else:  # 0° (default)
+                triangle_points = [(x, y), (x + width, y), (x, y + height)]
+            
+            triangle = patches.Polygon(triangle_points,
+                                      linewidth=1, edgecolor='black',
+                                      facecolor=color, alpha=0.7)
+            ax.add_patch(triangle)
+            # Add label at centroid
+            centroid_x = x + width / 3 + (width / 3 if rotation in [90, 180] else 0)
+            centroid_y = y + height / 3 + (height / 3 if rotation in [180, 270] else 0)
+            ax.text(centroid_x, centroid_y, f"{item_id}\n${price:.1f}",
+                   ha='center', va='center', fontsize=6, fontweight='bold')
+        
+        else:  # Rectangle or default
+            # Draw rectangle
+            rect = patches.Rectangle((x, y), width, height,
+                                    linewidth=1, edgecolor='black',
+                                    facecolor=color, alpha=0.7)
+            ax.add_patch(rect)
+            # Add label
+            center_x = x + width / 2
+            center_y = y + height / 2
+            ax.text(center_x, center_y, f"{item_id}\n${price:.1f}",
+                   ha='center', va='center', fontsize=7, fontweight='bold')
     
     def setup_plot(self):
         """Setup the initial plot with empty bins."""
@@ -126,36 +177,25 @@ class RealtimeVisualizer:
         
         # Get item info
         item_id = placement['item_id']
-        item_type = self.get_item_type(item_id)
-        color = self.colors.get(item_type, '#CCCCCC')
+        shape = placement['shape']
+        price = placement['price']
+        rotation = placement.get('rotation', 0)
+        color = self.get_color(item_id, shape)
         
-        # Draw the item with a highlight effect
-        rect = patches.Rectangle(
-            (placement['x'], placement['y']), 
-            placement['width'], 
-            placement['height'],
-            linewidth=2,
-            edgecolor='yellow',  # Highlight with yellow border
-            facecolor=color,
-            alpha=0.8
-        )
-        ax.add_patch(rect)
-        
-        # Add item label
-        center_x = placement['x'] + placement['width'] / 2
-        center_y = placement['y'] + placement['height'] / 2
-        rotation_marker = '↻' if placement['rotated'] else ''
-        ax.text(center_x, center_y, f"{item_id}\n{rotation_marker}",
-               ha='center', va='center', fontsize=8, fontweight='bold',
-               color='white', bbox=dict(boxstyle='round,pad=0.3', 
-               facecolor='black', alpha=0.5))
+        # Draw the shape with rotation
+        self.draw_shape_patch(ax, shape, placement['x'], placement['y'],
+                             placement['width'], placement['height'], 
+                             color, item_id, price, rotation)
         
         # Update bin info
         bin_id = placement['bin_id']
         items_in_bin = sum(1 for p in self.all_placements[:step+1] 
                           if p['bin_id'] == bin_id)
-        area_used = sum(p['width'] * p['height'] for p in self.all_placements[:step+1] 
+        area_used = sum(calculate_actual_area(p['shape'], p['width'], p['height']) 
+                       for p in self.all_placements[:step+1] 
                        if p['bin_id'] == bin_id)
+        value_in_bin = sum(p['price'] for p in self.all_placements[:step+1] 
+                          if p['bin_id'] == bin_id)
         
         bin_width, bin_height = self.bin_dimensions[bin_id]
         bin_area = bin_width * bin_height
@@ -165,7 +205,7 @@ class RealtimeVisualizer:
         for t in texts:
             t.remove()
         
-        ax.text(bin_width/2, -0.8, f'Items: {items_in_bin} | Area: {area_used}/{bin_area} cm²', 
+        ax.text(bin_width/2, -0.8, f'Items: {items_in_bin} | Area: {area_used:.1f}/{bin_area} cm² | Value: ${value_in_bin:.2f}', 
                ha='center', fontsize=9, color='gray')
         
         # Update title

@@ -14,8 +14,10 @@ import java.util.Map;
  */
 public class FirstFitPlacer {
 
+    /**
+     * Original pack method - tries different rotations automatically
+     */
     public PackingResult pack(List<Item> itemsToPack, List<Bin> bins) {
-        // This map will store the final placement of items for each bin.
         Map<Bin, List<PlacedItem>> solutionMap = new HashMap<>();
         for (Bin bin : bins) {
             solutionMap.put(bin, new ArrayList<>());
@@ -23,15 +25,40 @@ public class FirstFitPlacer {
 
         List<Item> unpackedItems = new ArrayList<>();
 
-        // For each item in the given order...
         for (Item item : itemsToPack) {
             boolean isPlaced = false;
-            // ...try to place it in the first possible bin.
             for (Bin bin : bins) {
-                // ...at the first possible position.
                 if (tryPlaceItemInBin(item, bin, solutionMap.get(bin))) {
                     isPlaced = true;
-                    break; // Move to the next item once placed.
+                    break;
+                }
+            }
+            if (!isPlaced) {
+                unpackedItems.add(item);
+            }
+        }
+
+        return new PackingResult(solutionMap, unpackedItems, bins);
+    }
+
+    /**
+     * New method - uses preset rotations from chromosome (for GA optimization)
+     */
+    public PackingResult packWithPresetRotations(List<Item> itemsToPack, List<Bin> bins) {
+        Map<Bin, List<PlacedItem>> solutionMap = new HashMap<>();
+        for (Bin bin : bins) {
+            solutionMap.put(bin, new ArrayList<>());
+        }
+
+        List<Item> unpackedItems = new ArrayList<>();
+
+        for (Item item : itemsToPack) {
+            boolean isPlaced = false;
+            // Use the rotation already set in the item (from chromosome)
+            for (Bin bin : bins) {
+                if (tryPlaceAtBestFit(item, bin, solutionMap.get(bin))) {
+                    isPlaced = true;
+                    break;
                 }
             }
             if (!isPlaced) {
@@ -44,7 +71,8 @@ public class FirstFitPlacer {
 
     /**
      * Tries to place a single item into a bin by checking for overlaps with items already in it.
-.     * Attempts both original and rotated orientations if rotation is enabled.
+     * For rectangles: tries original and 90° rotated
+     * For triangles: tries 4 orientations (0°, 90°, 180°, 270°) for tessellation
      */
     private boolean tryPlaceItemInBin(Item newItem, Bin bin, List<PlacedItem> existingItems) {
         // --- Try placing with original orientation ---
@@ -52,15 +80,33 @@ public class FirstFitPlacer {
             return true;
         }
 
-        // --- If it can be rotated and isn't a square, try rotated orientation ---
-        if (newItem.canRotate() && newItem.width() != newItem.height()) {
-            Item rotatedItem = new Item(newItem.id(), newItem.height(), newItem.width(), newItem.canRotate());
+        // --- For triangles, try all 4 rotations for tessellation ---
+        if (newItem.canRotate() && "Triangle".equals(newItem.shape())) {
+            // Try 90°, 180°, 270° rotations
+            for (int rotation : new int[]{90, 180, 270}) {
+                Item rotatedTriangle = new Item(
+                    newItem.id(), 
+                    newItem.shape(), 
+                    newItem.width(), 
+                    newItem.height(), 
+                    newItem.canRotate(), 
+                    newItem.price(),
+                    rotation
+                );
+                if (tryPlaceAtBestFit(rotatedTriangle, bin, existingItems)) {
+                    return true;
+                }
+            }
+        }
+        // --- For rectangles, try 90° rotation if not square ---
+        else if (newItem.canRotate() && newItem.width() != newItem.height()) {
+            Item rotatedItem = new Item(newItem.id(), newItem.shape(), newItem.height(), newItem.width(), newItem.canRotate(), newItem.price());
             if (tryPlaceAtBestFit(rotatedItem, bin, existingItems)) {
                 return true;
             }
         }
         
-        return false; // Could not be placed in either orientation.
+        return false; // Could not be placed in any orientation.
     }
 
     /**
@@ -85,17 +131,60 @@ public class FirstFitPlacer {
 
     /**
      * Checks if a new item at a given (x, y) position would overlap with any existing items.
+     * Special handling for triangles: allows TWO triangles to tessellate in the same bounding box
+     * if they have complementary rotations.
      */
     private boolean collides(Item newItem, int newX, int newY, List<PlacedItem> existingItems) {
         for (PlacedItem placed : existingItems) {
-            // Standard Axis-Aligned Bounding Box (AABB) collision detection.
+            // Check for bounding box overlap
             if (newX < placed.x() + placed.item().width() &&
                 newX + newItem.width() > placed.x() &&
                 newY < placed.y() + placed.item().height() &&
                 newY + newItem.height() > placed.y()) {
-                return true; // Collision detected.
+                
+                // SPECIAL CASE: Triangle tessellation
+                // Allow two triangles to occupy the SAME bounding box if they tessellate perfectly
+                if ("Triangle".equals(newItem.shape()) && "Triangle".equals(placed.item().shape())) {
+                    // Check if they're at the EXACT same position (perfect overlap)
+                    if (newX == placed.x() && newY == placed.y() &&
+                        newItem.width() == placed.item().width() &&
+                        newItem.height() == placed.item().height()) {
+                        
+                        // Check if rotations are complementary (form a complete square)
+                        if (areComplementaryRotations(newItem.rotation(), placed.item().rotation())) {
+                            // Count how many triangles are already at this exact position
+                            long trianglesAtPosition = existingItems.stream()
+                                .filter(p -> "Triangle".equals(p.item().shape()) &&
+                                            p.x() == newX && p.y() == newY &&
+                                            p.item().width() == newItem.width() &&
+                                            p.item().height() == newItem.height())
+                                .count();
+                            
+                            // Allow tessellation if only 1 triangle is there (we'll be the 2nd)
+                            if (trianglesAtPosition == 1) {
+                                continue; // No collision - allow tessellation!
+                            }
+                        }
+                    }
+                }
+                
+                return true; // Collision detected (no tessellation possible)
             }
         }
         return false; // No collision.
+    }
+    
+    /**
+     * Check if two triangle rotations are complementary (can tessellate to form a square).
+     * Complementary pairs: (0°, 180°) and (90°, 270°)
+     */
+    private boolean areComplementaryRotations(int rotation1, int rotation2) {
+        // Normalize rotations to 0-360 range
+        rotation1 = rotation1 % 360;
+        rotation2 = rotation2 % 360;
+        
+        // Check if they differ by exactly 180°
+        int diff = Math.abs(rotation1 - rotation2);
+        return diff == 180;
     }
 }

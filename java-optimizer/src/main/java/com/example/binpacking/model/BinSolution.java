@@ -17,14 +17,17 @@ public record BinSolution(
 ) {
     /**
      * A nested record to control the JSON output for each item.
-     * Includes ID, coordinates, and actual dimensions (accounting for rotation).
+     * Includes ID, shape, coordinates, dimensions, rotation angle, and price.
      */
     public record ItemPlacement(
         @SerializedName("id") String id,
+        @SerializedName("shape") String shape,
         @SerializedName("x") int x,
         @SerializedName("y") int y,
         @SerializedName("width") int width,
-        @SerializedName("height") int height
+        @SerializedName("height") int height,
+        @SerializedName("rotation") int rotation,
+        @SerializedName("price") double price
     ) {}
 
     /**
@@ -34,11 +37,14 @@ public record BinSolution(
     public static BinSolution from(Bin bin, List<PlacedItem> placedItems) {
         List<ItemPlacement> placements = placedItems.stream()
             .map(pi -> new ItemPlacement(
-                pi.id(), 
+                pi.id(),
+                pi.item().shape(),
                 pi.x(), 
                 pi.y(), 
                 pi.item().width(), 
-                pi.item().height()
+                pi.item().height(),
+                pi.item().rotation(),
+                pi.item().price()
             ))
             .collect(Collectors.toList());
         return new BinSolution(bin.id(), placements);
